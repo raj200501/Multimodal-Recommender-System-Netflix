@@ -90,8 +90,12 @@ setup(
         'analysis': ['*.R', '*.hs'],
     },
     scripts=[
-        'scripts/data_preprocessing.sh',
-        'scripts/model_training.sh',
-        'scripts/evaluation.sh',
+        script
+        for script in [
+            'scripts/data_preprocessing.sh',
+            'scripts/model_training.sh',
+            'scripts/evaluation.sh',
+        ]
+        if os.path.exists(script)
     ],
 )

@@ -1,0 +1,17 @@
+user_id,show_id,timestamp,device_type,watch_time_minutes,completion_ratio,profile,region
+u1,s1,2023-10-01 12:00:00,TV,45,0.9,Kids,US
+u1,s2,2023-10-02 18:00:00,Mobile,10,0.2,Kids,US
+u2,s2,2023-10-01 20:00:00,Laptop,35,0.7,Main,CA
+u2,s3,2023-10-03 21:00:00,TV,60,1.0,Main,CA
+u3,s1,2023-10-02 09:00:00,Tablet,20,0.4,Kids,US
+u3,s4,2023-10-03 10:00:00,Laptop,50,0.95,Kids,US
+u4,s3,2023-10-01 14:00:00,TV,55,0.88,Guest,UK
+u4,s4,2023-10-04 19:00:00,Mobile,5,0.1,Guest,UK
+u5,s5,2023-10-05 22:00:00,Laptop,42,0.84,Main,DE
+u5,s1,2023-10-06 20:00:00,TV,48,0.92,Main,DE
+u6,s2,2023-10-02 16:00:00,Mobile,15,0.3,Guest,FR
+u6,s5,2023-10-07 23:00:00,Laptop,47,0.94,Guest,FR
+u7,s1,2023-10-02 08:00:00,Tablet,52,0.98,Main,US
+u7,s3,2023-10-04 20:00:00,TV,30,0.6,Main,US
+u8,s4,2023-10-03 12:00:00,Mobile,33,0.66,Kids,BR
+u8,s5,2023-10-05 18:00:00,Laptop,25,0.5,Kids,BR

@@ -1,0 +1,10 @@
+{
+  "metrics": {
+    "precision_at_k": 0.6,
+    "test_users": 5
+  },
+  "recommendations": [
+    {"user_id": "u1", "model": "popularity", "titles": ["s1", "s3", "s4"]},
+    {"user_id": "u2", "model": "user_cf", "titles": ["s5", "s1", "s4"]}
+  ]
+}

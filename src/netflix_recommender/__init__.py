@@ -6,4 +6,12 @@ __all__ = [
     "database",
     "recommenders",
     "analysis_utils",
+    "observability",
+    "tracing",
+    "plugins",
+    "safety",
+    "runtime",
+    "demo",
+    "quality",
+    "reporting",
 ]

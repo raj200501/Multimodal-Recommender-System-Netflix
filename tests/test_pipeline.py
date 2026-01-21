@@ -11,6 +11,7 @@ def test_run_pipeline(tmp_path, monkeypatch):
 
     recommendations, metrics = data_pipeline.run_pipeline(config.DATA_PATH, top_k=3)
 
+    assert isinstance(recommendations, pd.DataFrame)
     assert not recommendations.empty
     assert "precision_at_k" in metrics
     assert (tmp_path / "recommendations.csv").exists()

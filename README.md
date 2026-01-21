@@ -58,3 +58,31 @@ Sample recommendations:
 - Navigate to `frontend/`, run `npm install` then `npm run dev` to launch the dashboard at http://localhost:5173.
 - The dashboard reads `frontend/public/sample_recommendations.json` by default; replace it with `outputs/recommendations.csv` converted to JSON for live data.
 - Components live in `frontend/src/` and use Chart.js for quick visuals (coverage, precision badge, per-user tiles).
+
+## 60-second Quickstart
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+PIP_NO_BUILD_ISOLATION=1 pip install -e . --no-build-isolation
+PYTHONPATH=src python -m netflix_recommender.run_pipeline
+```
+
+## Demo
+```bash
+bash scripts/demo.sh
+```
+The demo runs the pipeline in a temporary directory, enables tracing/observability/quality checks, and prints a summary with the generated outputs.
+
+## Verification
+```bash
+bash scripts/verify.sh
+```
+`scripts/verify.sh` installs dependencies (offline-safe), runs optional format/lint/type checks if available, executes the test suite, and runs the demo as a smoke test.
+
+## Features
+- End-to-end ETL + recommendation pipeline with output artifacts in `outputs/`.
+- Optional observability pack: structured logging, metrics registry, and OpenTelemetry scaffolding (off by default).
+- Trace recorder that outputs JSONL and Markdown reports for pipeline stages (demo enables this).
+- Plugin architecture with built-in engagement and cold-start tagging plugins (opt-in).
+- Safety policy and data quality checks that can be enabled via environment flags.
+- Pipeline reporting (`summary.json` and `pipeline_report.md`) for recruiter-friendly summaries.

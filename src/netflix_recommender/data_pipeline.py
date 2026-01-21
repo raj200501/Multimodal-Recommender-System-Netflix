@@ -3,16 +3,53 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import uuid
 from pathlib import Path
+from contextlib import nullcontext
 from typing import Dict, List, Tuple
 
 import duckdb
 import pandas as pd
 
 from . import analysis_utils, config, database, recommenders
+from .observability import MetricRegistry, configure_logging, metric_timer
+from .plugins import PluginContext, apply_plugins, build_default_registry
+from .quality import DataQualityConfig, run_quality_checks
+from .reporting import build_summary, write_markdown_report, write_summary
+from .runtime import PipelineRuntimeConfig, runtime_from_env
+from .safety import build_default_policy, enforce_policy
+from .tracing import TraceRecorder, build_trace_recorder
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+
+def resolve_runtime_config(runtime_config: PipelineRuntimeConfig | None) -> PipelineRuntimeConfig:
+    """Resolve runtime config from env when none is provided."""
+    if runtime_config is not None:
+        return runtime_config
+    run_id = os.getenv("NETFLIX_REC_RUN_ID", uuid.uuid4().hex)
+    return runtime_from_env(run_id)
+
+
+def ensure_logger(run_id: str, enable_observability: bool) -> logging.Logger:
+    if not enable_observability:
+        return logger
+    structured = configure_logging(service="netflix-recommender", run_id=run_id)
+    return structured._logger
+
+
+def maybe_timer(registry: MetricRegistry | None, name: str) -> nullcontext:
+    if registry is None:
+        return nullcontext()
+    return metric_timer(registry, name)
+
+
+def maybe_span(recorder: TraceRecorder | None, name: str) -> nullcontext:
+    if recorder is None:
+        return nullcontext()
+    return recorder.span(name)
 
 
 def extract_data(data_path: Path = config.DATA_PATH) -> pd.DataFrame:
@@ -129,28 +166,106 @@ def run_sql_examples(conn: duckdb.DuckDBPyConnection) -> List:
     return []
 
 
-def save_outputs(recommendations: pd.DataFrame, metrics: Dict[str, float]) -> None:
+def save_outputs(
+    recommendations: pd.DataFrame, metrics: Dict[str, float], output_dir: Path | None = None
+) -> None:
     """Persist outputs to disk."""
-    config.ensure_output_dir()
-    rec_path = config.OUTPUT_DIR / "recommendations.csv"
-    metrics_path = config.OUTPUT_DIR / "metrics.json"
+    resolved_output = output_dir or config.OUTPUT_DIR
+    resolved_output.mkdir(parents=True, exist_ok=True)
+    rec_path = resolved_output / "recommendations.csv"
+    metrics_path = resolved_output / "metrics.json"
     recommendations.to_csv(rec_path, index=False)
     metrics_path.write_text(json.dumps(metrics, indent=2))
     logger.info("Saved recommendations to %s and metrics to %s", rec_path, metrics_path)
 
 
-def run_pipeline(data_path: Path = config.DATA_PATH, top_k: int = config.DEFAULT_TOP_K) -> Tuple[pd.DataFrame, Dict[str, float]]:
+def run_pipeline(
+    data_path: Path = config.DATA_PATH,
+    top_k: int = config.DEFAULT_TOP_K,
+    runtime_config: PipelineRuntimeConfig | None = None,
+    metrics_registry: MetricRegistry | None = None,
+    trace_recorder: TraceRecorder | None = None,
+) -> Tuple[pd.DataFrame, Dict[str, float]]:
     """Run the full ETL + modeling pipeline."""
-    df = extract_data(data_path)
-    conn = database.get_connection(config.DB_PATH)
-    load_raw_data(df, conn)
-    build_star_schema(conn)
-    feature_engineering(conn)
-    recommendations = train_models(conn, top_k)
+
+    runtime_config = resolve_runtime_config(runtime_config)
+    structured_logger = (
+        configure_logging("netflix-recommender", runtime_config.run_id)
+        if runtime_config.enable_observability
+        else None
+    )
+    trace_recorder = trace_recorder or (
+        build_trace_recorder(runtime_config.trace_path, run_id=runtime_config.run_id, enabled=runtime_config.enable_tracing)
+        if runtime_config.trace_path is not None
+        else None
+    )
+    if metrics_registry is None and runtime_config.enable_metrics:
+        metrics_registry = MetricRegistry()
+
+    with maybe_span(trace_recorder, "extract"):
+        with maybe_timer(metrics_registry, "extract_data"):
+            df = extract_data(data_path)
+
+    if runtime_config.enable_quality_checks:
+        quality_config = DataQualityConfig(
+            min_rows=1,
+            required_columns=["user_id", "show_id", "timestamp", "completion_ratio"],
+            numeric_ranges={"completion_ratio": (0.0, 1.0)},
+        )
+        raw_report = run_quality_checks(df, quality_config, dataset="raw_views")
+        quality_path = runtime_config.quality_report_path or (runtime_config.output_dir / "quality_report.json")
+        quality_path.parent.mkdir(parents=True, exist_ok=True)
+        quality_path.write_text(json.dumps(raw_report.to_dict(), indent=2))
+        if structured_logger:
+            structured_logger.info("Quality checks completed", passed=raw_report.passed(), path=str(quality_path))
+
+    with maybe_span(trace_recorder, "connect"):
+        with maybe_timer(metrics_registry, "connect_db"):
+            conn = database.get_connection(runtime_config.db_path)
+
+    with maybe_span(trace_recorder, "load_raw"):
+        with maybe_timer(metrics_registry, "load_raw"):
+            load_raw_data(df, conn)
+
+    with maybe_span(trace_recorder, "star_schema"):
+        with maybe_timer(metrics_registry, "build_star_schema"):
+            build_star_schema(conn)
+
+    with maybe_span(trace_recorder, "feature_engineering"):
+        with maybe_timer(metrics_registry, "feature_engineering"):
+            feature_engineering(conn)
+
+    with maybe_span(trace_recorder, "train_models"):
+        with maybe_timer(metrics_registry, "train_models"):
+            recommendations = train_models(conn, top_k)
+
     database.write_dataframe(conn, recommendations, "recommendations")
-    metrics = evaluate_models(df, recommendations, top_k)
-    save_outputs(recommendations, metrics)
+
+    if runtime_config.enable_plugins:
+        registry = build_default_registry()
+        plugin_context = PluginContext(run_id=runtime_config.run_id, stage="post_recommendation")
+        recommendations = apply_plugins(recommendations, registry, plugin_context, enabled=True)
+        if structured_logger:
+            structured_logger.info("Applied plugins", plugins=registry.list_plugins())
+
+    if runtime_config.enable_policy:
+        policy = build_default_policy()
+        recommendations = enforce_policy(recommendations, policy, enabled=True)
+        if structured_logger:
+            structured_logger.info("Applied safety policy", rules=[rule.name for rule in policy.rules])
+
+    with maybe_span(trace_recorder, "evaluate"):
+        with maybe_timer(metrics_registry, "evaluate"):
+            metrics = evaluate_models(df, recommendations, top_k)
+
+    save_outputs(recommendations, metrics, output_dir=runtime_config.output_dir)
+    summary = build_summary(recommendations)
+    write_summary(summary, runtime_config.output_dir / "summary.json")
+    write_markdown_report(summary, metrics, runtime_config.output_dir / "pipeline_report.md")
     run_sql_examples(conn)
+
+    if structured_logger:
+        structured_logger.info("Pipeline complete", metrics=metrics)
     return recommendations, metrics
 
 
